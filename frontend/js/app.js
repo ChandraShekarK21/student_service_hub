@@ -86,7 +86,7 @@ const downloadUpload = async (uploadId, filename) => {
       }
     }
 
-  
+
     if (state.currentModule === 'sharelearn' && state.currentPage === 'search') {
       const btn = el('searchBtn');
       if (btn) btn.click();
@@ -123,8 +123,8 @@ const createUploadCard = (upload) => {
     </div>
     <div class="rating-stars" data-id="${upload._id}">
       ${[1, 2, 3, 4, 5]
-        .map((i) => `<span class="star" data-value="${i}">${i <= Math.round(avgRating) ? '★' : '☆'}</span>`)
-        .join('')}
+      .map((i) => `<span class="star" data-value="${i}">${i <= Math.round(avgRating) ? '★' : '☆'}</span>`)
+      .join('')}
     </div>
     <button class="primary download-btn" data-id="${upload._id}">Download</button>
   `;
@@ -177,7 +177,7 @@ const setSession = (token, user, isAdmin = false) => {
   state.isAdmin = isAdmin;
   localStorage.setItem('token', token);
   localStorage.setItem('user', JSON.stringify(user));
-  
+
   // Initialize Socket.io for student sessions (for real-time updates)
   if (!isAdmin && user && typeof initSocket === 'function') {
     // Use _id if available, otherwise use rollNo
@@ -252,27 +252,90 @@ const init = () => {
 
 const renderLogin = () => {
   return `
-  <div class="panel" style="max-width: 480px; margin: auto; margin-top: 80px;">
-    <h2>Login</h2>
-    <p>Use your roll number and password. Default password is your roll number.</p>
-    <div class="form-row">
-      <div>
-        <label>Roll Number</label>
-        <input id="loginRoll" placeholder="1601-24-749-001" />
+  <div class="login-page">
+    <div class="login-container">
+      <!-- Main Heading -->
+      <div class="login-header">
+        <h1 class="main-title">Smart Service Hub</h1>
+        <p class="subtitle">Your Complete Campus Solution</p>
       </div>
-      <div>
-        <label>Password</label>
-        <input id="loginPassword" type="password" placeholder="Password" />
+
+      <!-- Features Section -->
+      <div class="features-section">
+        <!-- Stationery Features -->
+        <div class="feature-column stationery-features">
+          <h3 class="feature-title">📚 Stationery</h3>
+          <div class="feature-list">
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Skip queues, order online</p>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Fast & easy collection</p>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>All essentials in one place</p>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Track your order live</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Share N Learn Features -->
+        <div class="feature-column sharelearn-features">
+          <h3 class="feature-title">📖 Share N Learn</h3>
+          <div class="feature-list">
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Access notes & PYQs easily</p>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Upload & share resources</p>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Quick search & discover</p>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <p>Earn top contributor rank</p>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div style="display:flex; gap: 12px; margin-top: 14px;">
-      <button class="primary" id="loginBtn">Login</button>
-      <button class="secondary" id="adminLoginBtn">Admin</button>
-    </div>
+      <!-- Login Box -->
+      <div class="login-box">
+        <h2>Welcome Back!</h2>
+        <p class="login-subtitle">Sign in to your account</p>
+        <div class="form-row">
+          <div>
+            <label>Roll Number</label>
+            <input id="loginRoll" placeholder="1601-24-749-001" />
+          </div>
+          <div>
+            <label>Password</label>
+            <input id="loginPassword" type="password" placeholder="Password" />
+          </div>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--muted); margin: 10px 0;">
+          Default password: your roll number
+        </p>
 
-    <div style="margin-top: 12px; font-size: 0.9rem; color: var(--muted);">
-      <strong>Student roll range:</strong> 1601-24-749-001 to 1601-24-749-050
+        <div style="display:flex; gap: 12px; margin-top: 16px;">
+          <button class="primary" id="loginBtn">Login</button>
+          <button class="secondary" id="adminLoginBtn">Admin</button>
+        </div>
+
+        <div style="margin-top: 12px; font-size: 0.85rem; color: var(--muted); text-align: center;">
+          <strong>Student roll range:</strong> 1601-24-749-001 to 1601-24-749-050
+        </div>
+      </div>
     </div>
   </div>
   `;
@@ -671,6 +734,48 @@ const renderShareLearn = () => {
   `;
 };
 
+const renderAdminLogin = () => {
+  return `
+  <div class="login-page">
+    <div class="login-container">
+      <!-- Main Heading -->
+      <div class="login-header">
+        <h1 class="main-title">Admin Portal</h1>
+        <p class="subtitle">Campus Stationery Management</p>
+      </div>
+
+      <!-- Admin Login Box -->
+      <div class="login-box" style="max-width: 450px; margin: 60px auto 0;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <div style="width: 70px; height: 70px; background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; font-size: 2rem;">
+            🔒
+          </div>
+        </div>
+        <h2 style="text-align: center;">Admin Access</h2>
+        <p class="login-subtitle" style="text-align: center;">Enter your admin credentials</p>
+        
+        <div class="form-row">
+          <div>
+            <label>Username</label>
+            <input id="adminUsername" placeholder="Enter admin username" />
+          </div>
+          <div>
+            <label>Password</label>
+            <input id="adminPassword" type="password" placeholder="Enter admin password" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap: 12px; margin-top: 16px;">
+          <button class="primary" id="adminSubmitBtn" style="width: 100%;">Admin Login</button>
+        </div>
+
+        <button id="backToLoginBtn" class="secondary" style="width: 100%; margin-top: 10px;">Back to Login</button>
+      </div>
+    </div>
+  </div>
+  `;
+};
+
 const renderAdmin = () => {
   return `<div class="panel">
     <h2>Admin Dashboard</h2>
@@ -725,8 +830,44 @@ const mountLogin = () => {
   if (adminLoginBtn) {
     adminLoginBtn.addEventListener('click', () => {
       console.log('Admin login button clicked');
-      // Redirect to React admin dashboard
-      window.location.href = '/admin-index.html';
+      navigate('adminLogin');
+    });
+  }
+};
+
+const mountAdminLogin = () => {
+  const adminSubmitBtn = el('adminSubmitBtn');
+  const backToLoginBtn = el('backToLoginBtn');
+
+  if (adminSubmitBtn) {
+    adminSubmitBtn.addEventListener('click', async () => {
+      const username = el('adminUsername').value.trim();
+      const password = el('adminPassword').value;
+      if (!username || !password) {
+        return showAlert('Please enter username and password', 'warning');
+      }
+
+      try {
+        const res = await request('/auth/admin/login', {
+          method: 'POST',
+          body: JSON.stringify({ username, password }),
+        });
+
+        setSession(res.token, res.admin, true);
+        // Directly redirect to admin dashboard without any intermediate pages
+        setTimeout(() => {
+          window.location.href = '/admin-index.html';
+        }, 100);
+      } catch (err) {
+        console.error('Admin login error:', err);
+        showAlert(err.message, 'error');
+      }
+    });
+  }
+
+  if (backToLoginBtn) {
+    backToLoginBtn.addEventListener('click', () => {
+      navigate('login');
     });
   }
 };
@@ -772,14 +913,14 @@ const mountShell = () => {
       openNotificationPanel();
     }
   });
-  
+
   // Close notification modal
   el('close-notifications')?.addEventListener('click', () => {
     if (typeof closeNotificationPanel === 'function') {
       closeNotificationPanel();
     }
   });
-  
+
   // Close on outside click
   el('notification-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'notification-modal' && typeof closeNotificationPanel === 'function') {
@@ -964,11 +1105,11 @@ const loadOrders = async () => {
           </div>
           <div style="margin-top: 8px;">
             ${order.items
-              .map(
-                (item) =>
-                  `<div style="display:flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--border);"><span>${item.name} × ${item.quantity}</span><span>₹${(item.price * item.quantity).toFixed(2)}</span></div>`
-              )
-              .join('')}
+            .map(
+              (item) =>
+                `<div style="display:flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--border);"><span>${item.name} × ${item.quantity}</span><span>₹${(item.price * item.quantity).toFixed(2)}</span></div>`
+            )
+            .join('')}
           </div>
           <div style="margin-top: 10px; font-weight: 600;">Total: ₹${order.totalPrice.toFixed(2)}</div>
         </div>
@@ -1362,7 +1503,7 @@ const loadShareLearnSearch = async () => {
       const res = await request('/uploads?limit=1000'); // Get many uploads to extract unique students
       const uploadedBySelect = el('searchUploadedBy');
       const uniqueStudents = new Map(); // Use Map to track unique students by ID
-      
+
       if (res.items && res.items.length > 0) {
         res.items.forEach((upload) => {
           if (upload.studentId && upload.uploadedBy && !uniqueStudents.has(upload.studentId)) {
@@ -1371,7 +1512,7 @@ const loadShareLearnSearch = async () => {
         });
 
         // Sort students by name
-        const sortedStudents = Array.from(uniqueStudents.entries()).sort((a, b) => 
+        const sortedStudents = Array.from(uniqueStudents.entries()).sort((a, b) =>
           a[1].localeCompare(b[1])
         );
 
@@ -1487,6 +1628,15 @@ const renderApp = async () => {
     state.currentModule = null;
     document.getElementById('app').innerHTML = renderLogin();
     mountLogin();
+    return;
+  }
+
+  // Admin login page
+  if (state.currentPage === 'adminLogin') {
+    clearSession();
+    state.currentModule = null;
+    document.getElementById('app').innerHTML = renderAdminLogin();
+    mountAdminLogin();
     return;
   }
 
