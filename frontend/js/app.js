@@ -948,7 +948,7 @@ const loadStationery = async () => {
       const card = document.createElement('div');
       card.className = 'card';
       card.innerHTML = `
-        <img src="${product.image || 'https://via.placeholder.com/280x140?text=Stationery'}" alt="${product.name}" />
+        <img src="http://localhost:5000${product.image}" alt="${product.name}" />
         <h3>${product.name}</h3>
         <div class="meta">
           <span>${product.category || 'Stationery'}</span>
@@ -1226,7 +1226,7 @@ const loadStationeryHome = async () => {
       const card = document.createElement('div');
       card.className = 'product-card';
       card.innerHTML = `
-        <img src="${product.image || '/placeholder.jpg'}" alt="${product.name}" />
+        <img src="http://localhost:5000${product.image}" alt="${product.name}" />
         <h3>${product.name}</h3>
         <p class="price">₹${product.price}</p>
         <p class="stock">Stock: ${product.stock}</p>
@@ -1280,7 +1280,7 @@ const loadStationeryShop = async () => {
         const card = document.createElement('div');
         card.className = 'product-card';
         card.innerHTML = `
-          <img src="${product.image || '/placeholder.jpg'}" alt="${product.name}" />
+          <img src="http://localhost:5000${product.image}" alt="${product.name}" />
           <h3>${product.name}</h3>
           <p class="category">${product.category}</p>
           <p class="price">₹${product.price}</p>

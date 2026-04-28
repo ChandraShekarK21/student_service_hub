@@ -39,6 +39,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/images', express.static('images'));
 
 // Notifications are now handled by notificationRoutes
 // See /api/notifications
