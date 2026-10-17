@@ -1,6 +1,23 @@
 const Upload = require('../models/Upload');
 const Rating = require('../models/Rating');
 const Student = require('../models/Student');
+const Notification = require('../models/Notification');
+
+const notifyUploadOwner = async ({ recipientId, type, title, message, uploadId }) => {
+  try {
+    await Notification.create({
+      recipientId,
+      recipientType: 'Student',
+      type,
+      title,
+      message,
+      uploadId,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    });
+  } catch (error) {
+    console.error(`Error creating ${type} notification:`, error);
+  }
+};
 
 const createUpload = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'File is required' });
@@ -28,6 +45,14 @@ const createUpload = async (req, res) => {
 
   // Increment student's upload count
   await Student.findByIdAndUpdate(req.student._id, { $inc: { uploadCount: 1 } });
+
+  await notifyUploadOwner({
+    recipientId: req.student._id,
+    type: 'upload_created',
+    title: 'Upload Successful',
+    message: `Your file "${upload.title}" was uploaded successfully.`,
+    uploadId: upload._id
+  });
 
   res.status(201).json(upload);
 };
@@ -147,6 +172,16 @@ const downloadFile = async (req, res) => {
   res.download(upload.filePath, (err) => {
     if (err) {
       console.error('Download error', err);
+      return;
+    }
+    if (String(upload.studentId) !== String(req.student._id)) {
+      void notifyUploadOwner({
+        recipientId: upload.studentId,
+        type: 'upload_downloaded',
+        title: 'Your File Was Downloaded',
+        message: `Your file "${upload.title}" was downloaded.`,
+        uploadId: upload._id
+      });
     }
   });
 };
@@ -178,6 +213,16 @@ const rateUpload = async (req, res) => {
   upload.averageRating = Number(avg.toFixed(1));
   upload.ratingsCount = ratings.length;
   await upload.save();
+
+  if (String(upload.studentId) !== String(req.student._id)) {
+    await notifyUploadOwner({
+      recipientId: upload.studentId,
+      type: 'upload_rated',
+      title: 'Your File Received a Rating',
+      message: `Your file "${upload.title}" received a ${rating}/5 rating.`,
+      uploadId: upload._id
+    });
+  }
 
   res.json({
     message: 'Rating saved',

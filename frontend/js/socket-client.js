@@ -82,7 +82,7 @@ const initSocket = (studentId) => {
   script.src = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
   
   script.onload = () => {
-    const socketIOUrl = window.location.origin;
+    const socketIOUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
     socket = window.io(socketIOUrl, {
       reconnection: true,
       reconnectionDelay: 1000,
@@ -96,22 +96,16 @@ const initSocket = (studentId) => {
       // Join student room for personal notifications
       if (studentId) {
         socket.emit('join-student-room', studentId);
+        loadStudentNotifications();
       }
     });
 
     // Listen for order status updates
     socket.on('order-status-updated', (data) => {
       console.log('📞 Order status updated:', data);
-      // Add notification
-      notificationManager.add({
-        type: 'orderStatusUpdated',
-        orderId: data.orderId,
-        orderNumber: data.orderNumber,
-        message: `Order #${data.orderNumber} status: ${data.status}`
-      });
-      // Increment notification badge
-      badgeManager.increment('notifications');
+      loadStudentNotifications();
       updateOrderStatusUI(data);
+      if (document.getElementById('ordersContainer')) window.refreshStudentOrders?.();
       showAlert(`Order ${data.orderNumber} status updated to: ${data.status}`, 'info');
       // Update notification panel if visible
       renderNotificationPanel();
@@ -120,13 +114,7 @@ const initSocket = (studentId) => {
     // Listen for new order confirmation
     socket.on('order-placed', (data) => {
       console.log('✅ Order confirmed:', data);
-      notificationManager.add({
-        type: 'orderPlaced',
-        orderId: data.orderId,
-        orderNumber: data.orderNumber,
-        message: `Order #${data.orderNumber} placed successfully`
-      });
-      badgeManager.increment('notifications');
+      loadStudentNotifications();
       showAlert(`Order ${data.orderNumber} placed successfully!`, 'success');
       renderNotificationPanel();
     });
@@ -280,10 +268,60 @@ const openNotificationPanel = () => {
   const modal = document.getElementById('notification-modal');
   if (modal) {
     modal.style.display = 'flex';
-    // Mark all as seen
-    notificationManager.markAllAsSeen();
-    badgeManager.reset('notifications');
+    loadStudentNotifications({ markRead: true });
+  }
+};
+
+const loadStudentNotifications = async ({
+  markRead = false,
+  module = window.portalModule || 'stationery'
+} = {}) => {
+  const token = localStorage.getItem('token');
+  if (!token) return;
+
+  const isShareLearnNotification = (notification) =>
+    ['upload_created', 'upload_downloaded', 'upload_rated'].includes(notification.type);
+  notificationManager.notifications = notificationManager.notifications.filter((notification) =>
+    module === 'sharelearn'
+      ? isShareLearnNotification(notification)
+      : !isShareLearnNotification(notification)
+  );
+  badgeManager.set('notifications', notificationManager.getUnseenCount());
+  renderNotificationPanel();
+
+  const apiBase = `${window.location.protocol}//${window.location.hostname}:5000/api`;
+  try {
+    const moduleQuery = `?module=${encodeURIComponent(module)}`;
+    const response = await fetch(`${apiBase}/notifications${moduleQuery}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      throw new Error(`Unable to load notifications (${response.status})`);
+    }
+
+    const notifications = await response.json();
+    notificationManager.notifications = notifications.map((notification) => ({
+      ...notification,
+      id: notification._id,
+      seen: notification.read
+    }));
+    badgeManager.set('notifications', notifications.filter((notification) => !notification.read).length);
     renderNotificationPanel();
+
+    if (markRead && notifications.some((notification) => !notification.read)) {
+      const markReadResponse = await fetch(`${apiBase}/notifications/mark-all-read${moduleQuery}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!markReadResponse.ok) {
+        throw new Error(`Unable to mark notifications as read (${markReadResponse.status})`);
+      }
+      notificationManager.markAllAsSeen();
+      badgeManager.reset('notifications');
+      renderNotificationPanel();
+    }
+  } catch (error) {
+    console.error('Notification sync failed:', error);
   }
 };
 
@@ -316,7 +354,7 @@ const renderNotificationPanel = () => {
       <div style="display: flex; justify-content: space-between; align-items: start;">
         <div>
           <h4 style="margin: 0 0 0.25rem 0; font-weight: 600;">
-            ${notif.type === 'orderStatusUpdated' ? '📦 Order Update' : '✅ Order Placed'}
+            ${notif.title || (notif.type === 'orderStatusUpdated' ? '📦 Order Update' : '✅ Order Placed')}
           </h4>
           <p style="margin: 0.25rem 0; color: var(--text); font-size: 0.9rem;">${notif.message}</p>
           <time style="display: block; margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted);">
@@ -362,6 +400,7 @@ window.addEventListener('beforeunload', () => {
 // Public API
 window.badgeManager = badgeManager;
 window.notificationManager = notificationManager;
+window.loadStudentNotifications = loadStudentNotifications;
 window.openNotificationPanel = openNotificationPanel;
 window.closeNotificationPanel = closeNotificationPanel;
 window.updateCartBadge = updateCartBadge;

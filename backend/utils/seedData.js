@@ -1,7 +1,10 @@
 const Product = require('../models/Product');
 
 const seedProducts = async () => {
-  await Product.deleteMany(); // 🔥 DELETE OLD DATA
+  if (await Product.exists()) {
+    console.log('Existing product catalog found; skipping seed');
+    return;
+  }
 
   const samples = [
     {

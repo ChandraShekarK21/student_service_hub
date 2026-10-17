@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Bell, Trash2, CheckCircle, BarChart3, Package, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import * as api from '../../../services/api';
+import { api } from '../../../services/api';
 
-function AdminNotifications({ socketEvents = {} }) {
+function AdminNotifications({ socketEvents = {}, onUnreadCountChange = () => {} }) {
     const [notifications, setNotifications] = useState([]);
     const [filteredNotifications, setFilteredNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [filter, setFilter] = useState('all');
     const [unreadCount, setUnreadCount] = useState(0);
 
@@ -44,9 +45,12 @@ function AdminNotifications({ socketEvents = {} }) {
             // Count unread
             const unread = (Array.isArray(data) ? data : []).filter(n => !n.read).length;
             setUnreadCount(unread);
+            onUnreadCountChange(unread);
+            setError(null);
         } catch (err) {
             console.error('Error fetching notifications:', err);
             setNotifications([]);
+            setError('Failed to load notifications. Please retry.');
         } finally {
             setLoading(false);
         }
@@ -63,7 +67,7 @@ function AdminNotifications({ socketEvents = {} }) {
             filtered = filtered.filter(n => n.type?.includes('stock'));
         }
 
-        setFilteredNotifications(filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+        setFilteredNotifications([...filtered].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
     };
 
     const handleMarkAsRead = async (notificationId) => {
@@ -72,7 +76,9 @@ function AdminNotifications({ socketEvents = {} }) {
             setNotifications(notifications.map(n =>
                 n._id === notificationId ? { ...n, read: true, readAt: new Date() } : n
             ));
-            setUnreadCount(prev => Math.max(0, prev - 1));
+            const nextUnread = Math.max(0, unreadCount - 1);
+            setUnreadCount(nextUnread);
+            onUnreadCountChange(nextUnread);
         } catch (err) {
             console.error('Error marking notification:', err);
         }
@@ -83,6 +89,7 @@ function AdminNotifications({ socketEvents = {} }) {
             await api.markAllNotificationsRead();
             setNotifications(notifications.map(n => ({ ...n, read: true, readAt: new Date() })));
             setUnreadCount(0);
+            onUnreadCountChange(0);
         } catch (err) {
             console.error('Error marking all notifications:', err);
         }
@@ -90,8 +97,15 @@ function AdminNotifications({ socketEvents = {} }) {
 
     const handleDelete = async (notificationId) => {
         try {
+            const removedNotification = notifications.find(n => n._id === notificationId);
             await api.deleteNotification(notificationId);
-            setNotifications(notifications.filter(n => n._id !== notificationId));
+            const remaining = notifications.filter(n => n._id !== notificationId);
+            setNotifications(remaining);
+            if (removedNotification && !removedNotification.read) {
+                const nextUnread = Math.max(0, unreadCount - 1);
+                setUnreadCount(nextUnread);
+                onUnreadCountChange(nextUnread);
+            }
         } catch (err) {
             console.error('Error deleting notification:', err);
         }
@@ -167,6 +181,13 @@ function AdminNotifications({ socketEvents = {} }) {
             </motion.div>
 
             {/* Filters */}
+            {error && (
+                <div className="card" role="alert" style={{ padding: '1rem', color: '#B91C1C', background: '#FEE2E2' }}>
+                    <AlertCircle size={18} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
+                    {error}
+                    <button className="btn btn-sm" onClick={fetchNotifications} style={{ marginLeft: '1rem' }}>Retry</button>
+                </div>
+            )}
             <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}

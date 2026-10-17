@@ -29,7 +29,13 @@ const placeOrder = async (req, res) => {
     const product = await Product.findById(id);
     if (!product) continue;
 
-    const quantity = Math.max(1, parseInt(entry.quantity || entry.qty || 1, 10));
+    const quantity = Number(entry.quantity || entry.qty || 1);
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return res.status(400).json({ message: 'Order quantities must be positive integers' });
+    }
+    if (quantity > product.stock) {
+      return res.status(409).json({ message: `Not enough stock for ${product.name}` });
+    }
     const price = product.price;
 
     normalized.push({ productId: product._id, name: product.name, quantity, price });
@@ -40,47 +46,113 @@ const placeOrder = async (req, res) => {
     return res.status(400).json({ message: 'No valid products found' });
   }
 
-  const orderNumber = await generateOrderNumber();
+  let order;
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const orderNumber = await generateOrderNumber();
+      try {
+        order = await Order.create({
+          orderNumber,
+          studentId,
+          items: normalized,
+          totalPrice: total,
+          status: 'Order placed',
+        });
+        break;
+      } catch (error) {
+        if (error.code !== 11000 || error.keyPattern?.orderNumber !== 1 || attempt === 4) throw error;
+      }
+    }
+  } catch (error) {
+    console.error('Error creating order:', error);
+    return res.status(error.code === 11000 ? 409 : 500).json({
+      message: error.code === 11000 ? 'Could not assign a unique order number. Please try again.' : 'Could not create order'
+    });
+  }
 
-  const order = await Order.create({
-    orderNumber,
-    studentId,
-    items: normalized,
-    totalPrice: total,
-    status: 'Order placed',
-  });
-
-  // Update stock for each item
+  const stockUpdates = [];
   for (const item of normalized) {
-    await Product.findByIdAndUpdate(item.productId, { $inc: { stock: -item.quantity } });
+    const previousProduct = await Product.findById(item.productId);
+    const updatedProduct = await Product.findByIdAndUpdate(
+      { _id: item.productId, stock: { $gte: item.quantity } },
+      { $inc: { stock: -item.quantity }, updatedAt: new Date() },
+      { new: true }
+    );
+    if (!updatedProduct) {
+      await Promise.all(stockUpdates.map(({ productId, quantity }) =>
+        Product.findByIdAndUpdate(productId, { $inc: { stock: quantity } })
+      ));
+      await Order.findByIdAndDelete(order._id);
+      return res.status(409).json({ message: `Stock changed while placing the order for ${item.name}; please try again` });
+    }
+    stockUpdates.push({
+      productId: item.productId,
+      quantity: item.quantity,
+      previousProduct,
+      updatedProduct
+    });
+  }
+
+  for (const { previousProduct, updatedProduct } of stockUpdates) {
+    if (updatedProduct && previousProduct &&
+        previousProduct.stock > previousProduct.minStock &&
+        updatedProduct.stock <= updatedProduct.minStock) {
+      try {
+        await Notification.create({
+          recipientId: null,
+          recipientType: 'Admin',
+          type: 'low_stock_alert',
+          title: 'Low Stock Alert',
+          message: `${updatedProduct.name} is at or below its minimum stock level (${updatedProduct.stock}/${updatedProduct.minStock}) after order #${order.orderNumber}`,
+          orderId: order._id,
+          productId: updatedProduct._id
+        });
+      } catch (err) {
+        console.error('Error creating low stock notification for order:', err);
+      }
+    }
+  }
+
+  try {
+    const orderedItems = normalized.map(item => `${item.name} x ${item.quantity}`).join(', ');
+    await Notification.create({
+      recipientId: null,
+      recipientType: 'Admin',
+      type: 'new_order_received',
+      title: 'New Order Received',
+      message: `New order #${order.orderNumber} placed: ${orderedItems}`,
+      orderId: order._id
+    });
+  } catch (err) {
+    console.error('Error creating admin order notification:', err);
+  }
+
+  try {
+    await Notification.create({
+      recipientId: studentId,
+      recipientType: 'Student',
+      type: 'order_placed',
+      title: 'Order Placed',
+      message: `Your order #${order.orderNumber} was placed successfully.`,
+      orderId: order._id
+    });
+  } catch (err) {
+    console.error('Error creating student order notification:', err);
   }
 
   // Clear student cart
   await Cart.findOneAndUpdate({ studentId }, { products: [] });
 
-  addNotification(studentId, `Order ${orderNumber} was placed successfully.`);
+  addNotification(studentId, `Order ${order.orderNumber} was placed successfully.`);
 
   // Emit real-time events
   if (global.io) {
-    // Create notification in database for admin
-    try {
-      const adminNotification = await Notification.create({
-        recipientId: null, // Broadcast to all admins
-        recipientType: 'Admin',
-        type: 'new_order_received',
-        title: 'New Order Received',
-        message: `New order #${orderNumber} placed`,
-        orderId: order._id,
-        read: false
-      });
-    } catch (err) {
-      console.error('Error creating admin notification:', err);
-    }
-
     // Get all admins in admin-room and increment badge
-    const unreadAdminOrders = await Order.countDocuments({
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
-    }).sort({ createdAt: -1 });
+    const unreadAdminOrders = await Notification.countDocuments({
+      recipientType: 'Admin',
+      read: false,
+      type: 'new_order_received'
+    });
 
     // Notify admin of new order with badge
     global.io.to('admin-room').emit('new-order', {
@@ -111,7 +183,8 @@ const placeOrder = async (req, res) => {
         productId: item.productId.toString(),
         productName: item.name,
         newStock: updatedProduct.stock,
-        minStock: updatedProduct.minStock
+        minStock: updatedProduct.minStock,
+        isLowStock: updatedProduct.stock <= updatedProduct.minStock
       });
     }
   }
@@ -121,8 +194,71 @@ const placeOrder = async (req, res) => {
 
 const getStudentOrders = async (req, res) => {
   const studentId = req.student._id;
-  const orders = await Order.find({ studentId }).sort({ createdAt: -1 });
+  const orders = await Order.find({ studentId, status: { $ne: 'Cancelled by User' } }).sort({ createdAt: -1 });
   res.json(orders);
+};
+
+const cancelStudentOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const allowedStatuses = ['Order placed', 'In queue', 'Reviewed', 'Processing'];
+    const order = await Order.findOneAndUpdate(
+      {
+        _id: id,
+        studentId: req.student._id,
+        status: { $in: allowedStatuses }
+      },
+      {
+        status: 'Cancelled by User',
+        remarks: 'Cancelled by user',
+        updatedAt: new Date(),
+        $push: {
+          statusHistory: {
+            status: 'Cancelled by User',
+            timestamp: new Date(),
+            changedBy: String(req.student._id)
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (!order) {
+      const existing = await Order.findOne({ _id: id, studentId: req.student._id }).select('status');
+      if (!existing) return res.status(404).json({ message: 'Order not found' });
+      return res.status(409).json({ message: `This order cannot be cancelled while its status is "${existing.status}"` });
+    }
+
+    const stockUpdates = await Promise.all(order.items.map(item =>
+      Product.findByIdAndUpdate(
+        item.productId,
+        { $inc: { stock: item.quantity }, updatedAt: new Date() },
+        { new: true }
+      )
+    ));
+
+    if (global.io) {
+      global.io.to('admin-room').emit('order-status-changed', {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        studentId: String(req.student._id)
+      });
+      for (const product of stockUpdates.filter(Boolean)) {
+        global.io.emit('stock-updated', {
+          productId: String(product._id),
+          productName: product.name,
+          newStock: product.stock,
+          minStock: product.minStock,
+          isLowStock: product.stock <= product.minStock
+        });
+      }
+    }
+
+    res.json({ message: 'Order cancelled successfully', order });
+  } catch (error) {
+    res.status(500).json({ message: 'Error cancelling order', error: error.message });
+  }
 };
 
 const getOrderById = async (req, res) => {
@@ -175,22 +311,21 @@ const updateOrderStatus = async (req, res) => {
 
   addNotification(order.studentId, `Order ${order.orderNumber} status updated to '${status}'.`);
 
-  // Create notification in database for student
-  if (global.io) {
-    try {
-      await Notification.create({
-        recipientId: order.studentId,
-        recipientType: 'Student',
-        type: 'order_status_updated',
-        title: 'Order Status Updated',
-        message: `Order #${order.orderNumber} is now ${status}`,
-        orderId: order._id,
-        read: false
-      });
-    } catch (err) {
-      console.error('Error creating student notification:', err);
-    }
+  try {
+    await Notification.create({
+      recipientId: order.studentId,
+      recipientType: 'Student',
+      type: 'order_status_updated',
+      title: 'Order Status Updated',
+      message: `Order #${order.orderNumber} is now ${status}`,
+      orderId: order._id,
+      read: false
+    });
+  } catch (err) {
+    console.error('Error creating student notification:', err);
+  }
 
+  if (global.io) {
     // Get unread updates count for this student
     const unreadUpdates = await Notification.countDocuments({
       recipientId: order.studentId,
@@ -222,6 +357,7 @@ module.exports = {
   placeOrder,
   getStudentOrders,
   getOrderById,
+  cancelStudentOrder,
   getAllOrders,
   updateOrderStatus,
 };

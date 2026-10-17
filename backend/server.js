@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -46,10 +47,19 @@ app.use('/images', express.static('images'));
 
 // Serve static frontend
 const frontendPath = path.join(__dirname, '..', 'frontend');
-app.use(express.static(frontendPath));
+const frontendBuildPath = path.join(frontendPath, 'dist');
+const frontendStaticPath = fs.existsSync(path.join(frontendBuildPath, 'index.html')) &&
+  fs.existsSync(path.join(frontendBuildPath, 'admin-index.html'))
+  ? frontendBuildPath
+  : frontendPath;
+app.use(express.static(frontendStaticPath));
+
+app.get(['/admin', '/admin/*'], (req, res) => {
+  res.sendFile(path.join(frontendStaticPath, 'admin-index.html'));
+});
 
 app.get('*', (req, res) => {
-  res.sendFile(path.join(frontendPath, 'index.html'));
+  res.sendFile(path.join(frontendStaticPath, 'index.html'));
 });
 
 const seedAdmin = async () => {
@@ -109,5 +119,3 @@ const start = async () => {
 };
 
 start();
-
-

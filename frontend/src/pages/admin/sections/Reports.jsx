@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { BarChart3, TrendingUp, Download, Calendar, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { api } from '../../../services/api';
@@ -12,6 +12,7 @@ function AdminReports({ socketEvents = {} }) {
     // Sales data state
     const [salesData, setSalesData] = useState([]);
     const [topItems, setTopItems] = useState([]);
+    const [reportData, setReportData] = useState({ items: [], summary: {} });
     
     // Computed metrics
     const [totalRevenue, setTotalRevenue] = useState(0);
@@ -19,7 +20,7 @@ function AdminReports({ socketEvents = {} }) {
     const [averageOrderValue, setAverageOrderValue] = useState(0);
 
     // Fetch sales data from API
-    const fetchSalesData = async () => {
+    const fetchSalesData = useCallback(async () => {
         try {
             setLoading(true);
             const response = await api.getDailySalesData(dateRange);
@@ -41,10 +42,10 @@ function AdminReports({ socketEvents = {} }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [dateRange]);
 
     // Fetch top items data from API
-    const fetchTopItems = async () => {
+    const fetchTopItems = useCallback(async () => {
         try {
             const response = await api.getTopSellingItems(5);
             if (response && response.items) {
@@ -55,18 +56,29 @@ function AdminReports({ socketEvents = {} }) {
             console.error('Error fetching top items:', err);
             setError('Failed to load top items');
         }
-    };
-
-    // Initial load
-    useEffect(() => {
-        fetchSalesData();
-        fetchTopItems();
     }, []);
 
-    // Refetch when date range changes
+    const fetchGeneralReport = useCallback(async () => {
+        try {
+            setLoading(true);
+            setReportData(await api.getAdminReport(reportType, dateRange));
+            setError(null);
+        } catch (err) {
+            console.error(`Error fetching ${reportType} report:`, err);
+            setError(`Failed to load ${reportType} report`);
+        } finally {
+            setLoading(false);
+        }
+    }, [dateRange, reportType]);
+
     useEffect(() => {
-        fetchSalesData();
-    }, [dateRange]);
+        if (reportType === 'sales') {
+            fetchSalesData();
+            fetchTopItems();
+        } else {
+            fetchGeneralReport();
+        }
+    }, [reportType, dateRange, fetchSalesData, fetchTopItems, fetchGeneralReport]);
 
     // Real-time updates when orders change
     useEffect(() => {
@@ -74,36 +86,43 @@ function AdminReports({ socketEvents = {} }) {
             console.log('Order event detected, refreshing reports...');
             // Debounce the refresh to avoid multiple calls
             const timer = setTimeout(() => {
-                fetchSalesData();
-                fetchTopItems();
+                if (reportType === 'sales') {
+                    fetchSalesData();
+                    fetchTopItems();
+                } else {
+                    fetchGeneralReport();
+                }
             }, 500);
             return () => clearTimeout(timer);
         }
-    }, [socketEvents?.newOrder, socketEvents?.orderStatusChanged, socketEvents?.orderCancelled]);
+    }, [socketEvents?.newOrder, socketEvents?.orderStatusChanged, socketEvents?.orderCancelled, reportType, dateRange, fetchSalesData, fetchTopItems, fetchGeneralReport]);
 
     const handleExportReport = () => {
-        // Generate CSV
-        const headers = ['Date', 'Orders', 'Revenue', 'Avg Order Value'];
-        const rows = salesData.map(day => [day.date, day.orders, day.revenue, day.avgOrderValue]);
+        const rowsToExport = reportType === 'sales'
+            ? salesData.map(day => [day.date, day.orders, day.revenue, day.avgOrderValue])
+            : reportData.items || [];
+        const headers = reportType === 'sales'
+            ? ['Date', 'Orders', 'Revenue', 'Avg Order Value']
+            : Object.keys(rowsToExport[0] || reportData.summary || {});
         
-        let csv = headers.join(',') + '\n';
-        rows.forEach(row => {
-            csv += row.join(',') + '\n';
-        });
+        const csvRows = rowsToExport.length
+            ? rowsToExport.map(row => headers.map(header => JSON.stringify(row[header] ?? '')).join(','))
+            : Object.entries(reportData.summary || {}).map(([key, value]) => `${JSON.stringify(key)},${JSON.stringify(value)}`);
+        const csv = [headers.join(','), ...csvRows].join('\n');
 
         // Download
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `sales-report-${new Date().toISOString().split('T')[0]}.csv`;
+        a.download = `${reportType}-report-${new Date().toISOString().split('T')[0]}.csv`;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
     };
 
-    if (error && salesData.length === 0 && topItems.length === 0) {
+    if (error) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 <div className="card" style={{
@@ -173,6 +192,8 @@ function AdminReports({ socketEvents = {} }) {
                 </div>
             </div>
 
+            {reportType === 'sales' ? (
+            <>
             {/* Key Metrics */}
             <div style={{
                 display: 'grid',
@@ -356,6 +377,58 @@ function AdminReports({ socketEvents = {} }) {
                     </table>
                 )}
             </div>
+            </>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                        gap: '1rem'
+                    }}>
+                        {Object.entries(reportData.summary || {}).map(([label, value]) => (
+                            <div className="card" key={label} style={{ padding: '1.25rem' }}>
+                                <p style={{ margin: 0, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                                    {label.replace(/([A-Z])/g, ' $1')}
+                                </p>
+                                <strong style={{ display: 'block', marginTop: '0.5rem', fontSize: '1.5rem' }}>
+                                    {typeof value === 'number' ? value.toLocaleString() : value}
+                                </strong>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="card" style={{ padding: '1.5rem', overflowX: 'auto' }}>
+                        <h3 style={{ marginTop: 0, textTransform: 'capitalize' }}>{reportType} Details</h3>
+                        {loading ? (
+                            <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Loading report...</p>
+                        ) : !reportData.items?.length ? (
+                            <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No data available for this report.</p>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                                        {Object.keys(reportData.items[0]).map(key => (
+                                            <th key={key} style={{ textAlign: 'left', padding: '0.75rem', textTransform: 'capitalize' }}>
+                                                {key.replace(/([A-Z])/g, ' $1')}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {reportData.items.map((item, index) => (
+                                        <tr key={item._id || item.rollNo || index} style={{ borderBottom: '1px solid var(--border)' }}>
+                                            {Object.entries(item).map(([key, value]) => (
+                                                <td key={key} style={{ padding: '0.75rem' }}>
+                                                    {typeof value === 'number' ? value.toLocaleString() : String(value ?? '')}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

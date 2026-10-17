@@ -177,6 +177,10 @@ const setSession = (token, user, isAdmin = false) => {
   state.isAdmin = isAdmin;
   localStorage.setItem('token', token);
   localStorage.setItem('user', JSON.stringify(user));
+  if (isAdmin) {
+    localStorage.setItem('admin_token', token);
+    localStorage.setItem('admin_username', user.username);
+  }
 
   // Initialize Socket.io for student sessions (for real-time updates)
   if (!isAdmin && user && typeof initSocket === 'function') {
@@ -194,6 +198,8 @@ const clearSession = () => {
   state.isAdmin = false;
   localStorage.removeItem('token');
   localStorage.removeItem('user');
+  localStorage.removeItem('admin_token');
+  localStorage.removeItem('admin_username');
 };
 
 const showAlert = (message, type = 'info', timeout = 4000) => {
@@ -343,6 +349,11 @@ const renderLogin = () => {
 
 const renderDashboard = async () => {
   const userName = state.user?.name || state.user?.rollNo || '';
+  window.portalModule = state.currentModule;
+  const showTopbarSearch = !(
+    (state.currentModule === 'stationery' && state.currentPage === 'shop') ||
+    (state.currentModule === 'sharelearn' && ['search', 'upload'].includes(state.currentPage))
+  );
   let navItems = '';
 
   if (state.currentModule === 'stationery') {
@@ -373,10 +384,10 @@ const renderDashboard = async () => {
     </aside>
     <main class="content">
       <div class="topbar">
-        <div class="search">
+        ${showTopbarSearch ? `<div class="search">
           <input id="searchInput" type="search" placeholder="Search..." />
           <button id="searchBtn" class="secondary">Search</button>
-        </div>
+        </div>` : '<div></div>'}
         <div class="top-actions">
           <div style="position: relative; display: inline-block;">
             <button id="notificationsBtn" style="position: relative;">🔔
@@ -400,7 +411,7 @@ const renderDashboard = async () => {
       <div id="notification-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; flex-align: center; justify-content: center; align-items: center;">
         <div style="background: white; border-radius: 0.5rem; width: 90%; max-width: 500px; padding: 2rem; max-height: 70vh; overflow-y: auto;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
-            <h2 style="margin: 0; font-size: 1.3rem;">Notifications</h2>
+            <h2 style="margin: 0; font-size: 1.3rem;">${state.currentModule === 'sharelearn' ? 'Share N Learn Notifications' : 'Notifications'}</h2>
             <button id="close-notifications" style="background: none; border: none; cursor: pointer; font-size: 1.5rem; color: var(--text-muted);">✕</button>
           </div>
           <div id="notifications-list">
@@ -856,7 +867,7 @@ const mountAdminLogin = () => {
         setSession(res.token, res.admin, true);
         // Directly redirect to admin dashboard without any intermediate pages
         setTimeout(() => {
-          window.location.href = '/admin-index.html';
+          window.location.href = '/admin/dashboard';
         }, 100);
       } catch (err) {
         console.error('Admin login error:', err);
@@ -879,7 +890,7 @@ const mountShell = () => {
       const page = btn.dataset.page;
       if (page === 'logout') {
         clearSession();
-        navigate('login');
+        window.location.assign('/');
         return;
       }
 
@@ -1097,10 +1108,10 @@ const loadOrders = async () => {
     const html = orders
       .map(
         (order) => `
-        <div class="card">
+        <div class="card" data-order-id="${order._id}">
           <h3>Order ${order.orderNumber}</h3>
           <div class="meta">
-            <span>Status: <strong>${order.status}</strong></span>
+            <span>Status: <strong data-order-status>${order.status}</strong></span>
             <span>Date: ${new Date(order.createdAt).toLocaleString()}</span>
           </div>
           <div style="margin-top: 8px;">
@@ -1112,16 +1123,35 @@ const loadOrders = async () => {
             .join('')}
           </div>
           <div style="margin-top: 10px; font-weight: 600;">Total: ₹${order.totalPrice.toFixed(2)}</div>
+          ${['Order placed', 'In queue', 'Reviewed', 'Processing'].includes(order.status)
+            ? `<button class="secondary cancel-order-btn" data-order-id="${order._id}" style="margin-top: 12px;">Cancel Order</button>`
+            : ''}
         </div>
       `
       )
       .join('');
 
     container.innerHTML = html;
+    container.querySelectorAll('.cancel-order-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (!confirm('Cancel this order?')) return;
+        button.disabled = true;
+        try {
+          await request(`/orders/${button.dataset.orderId}`, { method: 'DELETE' });
+          showAlert('Order cancelled successfully', 'success');
+          await loadOrders();
+        } catch (err) {
+          showAlert(err.message, 'error');
+          button.disabled = false;
+        }
+      });
+    });
   } catch (err) {
     container.innerHTML = `<p class="alert error">${err.message}</p>`;
   }
 };
+
+window.refreshStudentOrders = loadOrders;
 
 const loadShareLearn = async () => {
   const uploadsGrid = el('uploadsGrid');
@@ -1264,7 +1294,6 @@ const loadStationeryShop = async () => {
     try {
       const queryParams = new URLSearchParams();
       if (category) queryParams.append('category', category);
-      if (state.searchQuery) queryParams.append('search', state.searchQuery);
       const url = queryParams.toString() ? `/products?${queryParams}` : '/products';
 
       const res = await request(url);
@@ -1330,7 +1359,7 @@ const loadStationeryShop = async () => {
     }
   };
 
-  categoryFilter.addEventListener('change', () => {
+  categoryFilter?.addEventListener('change', () => {
     loadProducts(categoryFilter.value);
   });
 
@@ -1531,12 +1560,6 @@ const loadShareLearnSearch = async () => {
 
   populateUploadedByDropdown();
 
-  // If user searched via the top bar, prefill and run
-  if (state.searchQuery) {
-    el('searchKeywords').value = state.searchQuery;
-    performSearch();
-    state.searchQuery = '';
-  }
 };
 
 const loadShareLearnDashboard = async () => {
@@ -1660,6 +1683,7 @@ const renderApp = async () => {
 
   document.getElementById('app').innerHTML = await renderDashboard();
   mountShell();
+  window.loadStudentNotifications?.({ module: state.currentModule });
 
   const page = state.currentPage;
   const content = el('pageContent');

@@ -1,4 +1,13 @@
-const BASE_URL = 'http://localhost:5000/api';
+const API_ORIGIN = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
+const BASE_URL = `${API_ORIGIN}/api`;
+
+const readResponse = async (response) => {
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.message || `Request failed (${response.status})`);
+    }
+    return data;
+};
 
 const getAuthHeader = (token = null) => {
     const adminToken = token || localStorage.getItem('admin_token');
@@ -19,8 +28,9 @@ export const api = {
         return res.json();
     },
     getStudentProducts: async () => {
-        const res = await fetch(`${BASE_URL}/student/products`);
-        return res.json();
+        const res = await fetch(`${BASE_URL}/products`);
+        const data = await readResponse(res);
+        return (data.items || []).map(product => ({ ...product, id: product._id }));
     },
     placeOrder: async (roll_number, items) => {
         const res = await fetch(`${BASE_URL}/student/order`, {
@@ -98,7 +108,7 @@ export const api = {
         const res = await fetch(`${BASE_URL}/admin/stats`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
 
     // Orders
@@ -114,13 +124,13 @@ export const api = {
         const res = await fetch(`${BASE_URL}/admin/orders${query}`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     getAdminOrderDetail: async (orderId) => {
         const res = await fetch(`${BASE_URL}/admin/orders/${orderId}`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     updateAdminOrderStatus: async (orderId, status, remarks = '') => {
         const res = await fetch(`${BASE_URL}/admin/orders/${orderId}/status`, {
@@ -128,7 +138,7 @@ export const api = {
             headers: getAuthHeader(),
             body: JSON.stringify({ status, remarks })
         });
-        return res.json();
+        return readResponse(res);
     },
     updateAdminPaymentStatus: async (orderId, paymentStatus) => {
         const res = await fetch(`${BASE_URL}/admin/orders/${orderId}/payment-status`, {
@@ -136,7 +146,7 @@ export const api = {
             headers: getAuthHeader(),
             body: JSON.stringify({ paymentStatus })
         });
-        return res.json();
+        return readResponse(res);
     },
 
     // Inventory/Stock
@@ -149,13 +159,13 @@ export const api = {
         const res = await fetch(`${BASE_URL}/admin/inventory${query}`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     getStockAnalytics: async () => {
         const res = await fetch(`${BASE_URL}/admin/inventory/analytics`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     updateAdminStock: async (productId, quantity, action = 'set') => {
         const res = await fetch(`${BASE_URL}/admin/inventory/${productId}`, {
@@ -163,22 +173,22 @@ export const api = {
             headers: getAuthHeader(),
             body: JSON.stringify({ quantity, action })
         });
-        return res.json();
+        return readResponse(res);
     },
 
     // Notifications
     getAdminNotifications: async () => {
-        const res = await fetch(`${BASE_URL}/admin/notifications?recipientType=Admin`, {
+        const res = await fetch(`${BASE_URL}/admin/notifications`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     markNotificationRead: async (notificationId) => {
         const res = await fetch(`${BASE_URL}/admin/notifications/${notificationId}/read`, {
             method: 'PUT',
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     markAllNotificationsRead: async () => {
         const res = await fetch(`${BASE_URL}/admin/notifications/mark-all-read`, {
@@ -186,20 +196,20 @@ export const api = {
             headers: getAuthHeader(),
             body: JSON.stringify({ recipientType: 'Admin' })
         });
-        return res.json();
+        return readResponse(res);
     },
     getUnreadCount: async () => {
-        const res = await fetch(`${BASE_URL}/admin/notifications/unread-count?recipientType=Admin`, {
+        const res = await fetch(`${BASE_URL}/admin/notifications/unread-count`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     deleteNotification: async (notificationId) => {
         const res = await fetch(`${BASE_URL}/admin/notifications/${notificationId}`, {
             method: 'DELETE',
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
 
     // Products (Admin)
@@ -211,7 +221,7 @@ export const api = {
         
         const query = params.toString() ? `?${params.toString()}` : '';
         const res = await fetch(`${BASE_URL}/products${query}`);
-        return res.json();
+        return readResponse(res);
     },
     createAdminProduct: async (productData) => {
         const res = await fetch(`${BASE_URL}/products`, {
@@ -219,7 +229,7 @@ export const api = {
             headers: getAuthHeader(),
             body: JSON.stringify(productData)
         });
-        return res.json();
+        return readResponse(res);
     },
     updateAdminProduct: async (productId, productData) => {
         const res = await fetch(`${BASE_URL}/products/${productId}`, {
@@ -227,14 +237,14 @@ export const api = {
             headers: getAuthHeader(),
             body: JSON.stringify(productData)
         });
-        return res.json();
+        return readResponse(res);
     },
     deleteAdminProduct: async (productId) => {
         const res = await fetch(`${BASE_URL}/products/${productId}`, {
             method: 'DELETE',
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
 
     // Reports
@@ -242,12 +252,19 @@ export const api = {
         const res = await fetch(`${BASE_URL}/admin/reports/daily-sales?dateRange=${dateRange}`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
     },
     getTopSellingItems: async (limit = 5) => {
         const res = await fetch(`${BASE_URL}/admin/reports/top-items?limit=${limit}`, {
             headers: getAuthHeader()
         });
-        return res.json();
+        return readResponse(res);
+    },
+    getAdminReport: async (type, dateRange = 'month') => {
+        const params = new URLSearchParams({ type, dateRange });
+        const res = await fetch(`${BASE_URL}/admin/reports/data?${params}`, {
+            headers: getAuthHeader()
+        });
+        return readResponse(res);
     }
 };

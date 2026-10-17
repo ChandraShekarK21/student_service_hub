@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, LayoutDashboard, Package, Bell, Warehouse, FileText, Settings } from 'lucide-react';
 import { motion } from 'framer-motion';
 import useSocket from '../../hooks/useSocket';
+import { api } from '../../services/api';
 import AdminDashboardHome from './sections/DashboardHome';
 import AdminOrders from './sections/Orders';
 import AdminNotifications from './sections/Notifications';
@@ -43,6 +44,25 @@ function AdminDashboard() {
         }
     }, [navigate]);
 
+    useEffect(() => {
+        let active = true;
+        const refreshAdminBadges = async () => {
+            try {
+                const [notifications, stock] = await Promise.all([
+                    api.getUnreadCount(),
+                    api.getStockAnalytics()
+                ]);
+                if (!active) return;
+                setUnreadNotificationsCount(notifications.unreadCount || 0);
+                setLowStockCount((stock.lowStockItems?.length || 0) + (stock.outOfStockItems?.length || 0));
+            } catch (err) {
+                console.error('Error refreshing admin badges:', err);
+            }
+        };
+        refreshAdminBadges();
+        return () => { active = false; };
+    }, [events.newOrder, events.lowStockAlert, events.stockUpdated]);
+
     // Log real-time events
     useEffect(() => {
         if (events.newOrder) {
@@ -54,14 +74,9 @@ function AdminDashboard() {
         }
         if (events.stockUpdated) {
             console.log('📦 Stock updated:', events.stockUpdated);
-            if (events.stockUpdated.isLowStock) {
-                setLowStockCount(prev => prev + 1);
-            }
         }
         if (events.lowStockAlert) {
             console.log('⚠️ Low stock alert:', events.lowStockAlert);
-            setLowStockCount(prev => prev + 1);
-            setUnreadNotificationsCount(prev => prev + 1);
         }
     }, [events]);
 
@@ -69,7 +84,9 @@ function AdminDashboard() {
         localStorage.removeItem('admin_token');
         localStorage.removeItem('admin_username');
         localStorage.removeItem('admin_auth');
-        navigate('/login');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.assign('/');
     };
 
     if (error) {
@@ -107,7 +124,7 @@ function AdminDashboard() {
                 case 'orders':
                     return <AdminOrders socketEvents={events} />;
                 case 'notifications':
-                    return <AdminNotifications socketEvents={events} />;
+                    return <AdminNotifications socketEvents={events} onUnreadCountChange={setUnreadNotificationsCount} />;
                 case 'stock':
                     return <AdminStock socketEvents={events} />;
                 case 'reports':
@@ -155,10 +172,7 @@ function AdminDashboard() {
                                 key={section.id}
                                 onClick={() => {
                                     setActiveSection(section.id);
-                                    // Reset badge when opening section
                                     if (section.id === 'orders') setUnreadOrdersCount(0);
-                                    if (section.id === 'notifications') setUnreadNotificationsCount(0);
-                                    if (section.id === 'stock') setLowStockCount(0);
                                 }}
                                 style={{
                                     background: activeSection === section.id ? 'rgba(255,255,255,0.2)' : 'transparent',

@@ -20,11 +20,9 @@ function AdminOrders({ socketEvents = {} }) {
     // Status Update State
     const [updatingStatus, setUpdatingStatus] = useState(false);
 
-    // Mark all notifications as read when user opens Orders section
     useEffect(() => {
         fetchOrders();
         const interval = setInterval(fetchOrders, 30000);
-        markOrderNotificationsAsRead();
         return () => clearInterval(interval);
     }, []);
 
@@ -51,15 +49,6 @@ function AdminOrders({ socketEvents = {} }) {
             setError('Failed to load orders');
         } finally {
             setLoading(false);
-        }
-    };
-
-    const markOrderNotificationsAsRead = async () => {
-        try {
-            // Mark all order-related notifications as read
-            await api.markAllNotificationsRead();
-        } catch (err) {
-            console.error('Error marking notifications as read:', err);
         }
     };
 
@@ -130,7 +119,8 @@ function AdminOrders({ socketEvents = {} }) {
         'Packed successfully',
         'Ready to collect',
         'Delivered',
-        'Cancelled'
+        'Cancelled',
+        'Cancelled by User'
     ];
 
     const paymentStatusOptions = ['Pending', 'Paid', 'Failed'];
@@ -145,7 +135,8 @@ function AdminOrders({ socketEvents = {} }) {
             'Ready to collect': '#06B6D4',
             'Ready to Collect': '#06B6D4',
             'Delivered': '#10B981',
-            'Cancelled': '#EF4444'
+            'Cancelled': '#EF4444',
+            'Cancelled by User': '#EF4444'
         };
         return colors[status] || '#6B7280';
     };

@@ -39,13 +39,18 @@ const createProduct = async (req, res) => {
   if (!name || price == null || stock == null) {
     return res.status(400).json({ message: 'name, price and stock are required' });
   }
+  if (!Number.isFinite(Number(price)) || Number(price) < 0 ||
+      !Number.isInteger(Number(stock)) || Number(stock) < 0 ||
+      (minStock != null && (!Number.isInteger(Number(minStock)) || Number(minStock) < 0))) {
+    return res.status(400).json({ message: 'price, stock and minStock must be valid non-negative numbers' });
+  }
 
   const product = await Product.create({ 
     name, 
     category, 
-    price, 
-    stock, 
-    minStock: minStock || 10, 
+    price: Number(price),
+    stock: Number(stock),
+    minStock: minStock == null ? 10 : Number(minStock),
     image 
   });
 
@@ -69,41 +74,39 @@ const updateProduct = async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
   const oldProduct = await Product.findById(id);
+  if (!oldProduct) return res.status(404).json({ message: 'Product not found' });
+
+  for (const field of ['price', 'stock', 'minStock']) {
+    if (updates[field] !== undefined &&
+        (!Number.isFinite(Number(updates[field])) || Number(updates[field]) < 0 ||
+          (field !== 'price' && !Number.isInteger(Number(updates[field]))))) {
+      return res.status(400).json({ message: `${field} must be a valid non-negative ${field === 'price' ? 'number' : 'integer'}` });
+    }
+  }
+
   const product = await Product.findByIdAndUpdate(id, { ...updates, updatedAt: new Date() }, { new: true });
   if (!product) return res.status(404).json({ message: 'Product not found' });
   
-  // Check if stock was updated
-  const stockUpdated = updates.stock !== undefined;
-  const minStockUpdated = updates.minStock !== undefined;
-  
-  // Determine if low stock alert should be shown
   const isLowStock = product.stock <= product.minStock;
-  const wasLowStock = oldProduct && oldProduct.stock <= oldProduct.minStock;
+  const wasLowStock = oldProduct.stock <= oldProduct.minStock;
   
-  // Emit stock/inventory update event with badge info
-  if (global.io) {
-    // Get low stock items count for admin badge
-    const lowStockItems = await Product.countDocuments({ 
-      stock: { $lte: Product.db.model('Product').schema.path('minStock').defaultValue || 10 } 
-    });
-
-    // Create notification for admin if transitioning to low stock
-    if (isLowStock && !wasLowStock) {
-      try {
-        await Notification.create({
-          recipientId: null, // Broadcast to all admins
-          recipientType: 'Admin',
-          type: 'low_stock_alert',
-          title: 'Low Stock Alert',
-          message: `${product.name} is below minimum stock level (${product.stock}/${product.minStock})`,
-          productId: product._id,
-          read: false
-        });
-      } catch (err) {
-        console.error('Error creating low stock notification:', err);
-      }
+  if (isLowStock && !wasLowStock) {
+    try {
+      await Notification.create({
+        recipientId: null,
+        recipientType: 'Admin',
+        type: 'low_stock_alert',
+        title: 'Low Stock Alert',
+        message: `${product.name} is at or below its minimum stock level (${product.stock}/${product.minStock})`,
+        productId: product._id
+      });
+    } catch (err) {
+      console.error('Error creating low stock notification:', err);
     }
+  }
 
+  if (global.io) {
+    const lowStockItems = await Product.countDocuments({ $expr: { $lte: ['$stock', '$minStock'] } });
     global.io.emit('stock-updated', {
       productId: product._id.toString(),
       productName: product.name,
@@ -115,6 +118,14 @@ const updateProduct = async (req, res) => {
       price: product.price,
       badge: lowStockItems // Number of items below min stock
     });
+    if (isLowStock && !wasLowStock) {
+      global.io.to('admin-room').emit('low-stock-alert', {
+        productId: product._id.toString(),
+        productName: product.name,
+        newStock: product.stock,
+        minStock: product.minStock
+      });
+    }
   }
   
   res.json(product);

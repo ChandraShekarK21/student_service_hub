@@ -13,7 +13,8 @@ const useSocket = () => {
 
   useEffect(() => {
     // Connect to socket.io server
-    const socketUrl = window.location.origin;
+    const socketUrl = import.meta.env.VITE_SOCKET_URL ||
+      `${window.location.protocol}//${window.location.hostname}:5000`;
     const newSocket = io(socketUrl, {
       reconnection: true,
       reconnectionDelay: 1000,

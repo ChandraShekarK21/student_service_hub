@@ -22,15 +22,19 @@ const createNotification = async (recipientId, recipientType, type, title, messa
   }
 };
 
-// Get notifications for user
+const getAdminNotificationQuery = (req) => ({
+  recipientType: 'Admin',
+  $or: [
+    { recipientId: req.admin._id },
+    { recipientId: null },
+    { recipientId: { $exists: false } }
+  ]
+});
+
+// Get notifications for authenticated admin
 const getNotifications = async (req, res) => {
   try {
-    const { recipientId, recipientType } = req.query;
-    
-    const notifications = await Notification.find({
-      recipientId,
-      recipientType
-    })
+    const notifications = await Notification.find(getAdminNotificationQuery(req))
       .populate('orderId')
       .populate('productId')
       .sort({ createdAt: -1 })
@@ -47,8 +51,8 @@ const markAsRead = async (req, res) => {
   try {
     const { notificationId } = req.params;
     
-    const notification = await Notification.findByIdAndUpdate(
-      notificationId,
+    const notification = await Notification.findOneAndUpdate(
+      { _id: notificationId, ...getAdminNotificationQuery(req) },
       { read: true, readAt: new Date() },
       { new: true }
     );
@@ -66,10 +70,8 @@ const markAsRead = async (req, res) => {
 // Mark all notifications as read
 const markAllAsRead = async (req, res) => {
   try {
-    const { recipientId, recipientType } = req.body;
-    
     await Notification.updateMany(
-      { recipientId, recipientType, read: false },
+      { ...getAdminNotificationQuery(req), read: false },
       { read: true, readAt: new Date() }
     );
 
@@ -82,11 +84,8 @@ const markAllAsRead = async (req, res) => {
 // Get unread count
 const getUnreadCount = async (req, res) => {
   try {
-    const { recipientId, recipientType } = req.query;
-    
     const count = await Notification.countDocuments({
-      recipientId,
-      recipientType,
+      ...getAdminNotificationQuery(req),
       read: false
     });
 
@@ -100,9 +99,11 @@ const getUnreadCount = async (req, res) => {
 const deleteNotification = async (req, res) => {
   try {
     const { notificationId } = req.params;
-    
-    await Notification.findByIdAndDelete(notificationId);
-    
+    const notification = await Notification.findOneAndDelete({
+      _id: notificationId,
+      ...getAdminNotificationQuery(req)
+    });
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
     res.json({ message: 'Notification deleted' });
   } catch (error) {
     res.status(500).json({ message: 'Error deleting notification', error: error.message });

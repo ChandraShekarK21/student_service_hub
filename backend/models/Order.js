@@ -14,7 +14,7 @@ const OrderSchema = new mongoose.Schema({
   totalPrice: { type: Number, required: true, min: 0 },
   status: {
     type: String,
-    enum: ['Order placed', 'In queue', 'Packed successfully', 'Ready to collect', 'Delivered', 'Reviewed', 'Processing', 'Ready to Collect', 'Cancelled'],
+    enum: ['Order placed', 'In queue', 'Packed successfully', 'Ready to collect', 'Ready to Collect', 'Delivered', 'Reviewed', 'Processing', 'Cancelled', 'Cancelled by User'],
     default: 'Order placed',
   },
   paymentStatus: {

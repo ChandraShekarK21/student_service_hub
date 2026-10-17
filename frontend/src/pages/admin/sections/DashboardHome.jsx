@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { PackageOpen, AlertCircle, CheckCircle, TrendingUp, AlertTriangle, Users } from 'lucide-react';
+import { PackageOpen, AlertCircle, CheckCircle, TrendingUp, AlertTriangle, Users, XCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { api } from '../../../services/api';
 
@@ -69,6 +69,7 @@ function AdminDashboardHome({ socketEvents = {} }) {
         { label: 'Processing', value: summary.processingOrders, icon: TrendingUp, color: '#8B5CF6', subtext: 'Being packed' },
         { label: 'Ready to Collect', value: summary.readyToCollect, icon: CheckCircle, color: '#10B981', subtext: 'Waiting pickup' },
         { label: 'Delivered', value: summary.deliveredOrders, icon: CheckCircle, color: '#06B6D4' },
+        { label: 'Cancelled by User', value: summary.cancelledByUserOrders, icon: XCircle, color: '#EF4444' },
         { label: 'Total Revenue', value: `₹${(summary.totalRevenue || 0).toLocaleString()}`, icon: TrendingUp, color: '#EC4899', subtext: `Pending: ₹${(summary.pendingRevenue || 0).toLocaleString()}` }
     ];
 

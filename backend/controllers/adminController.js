@@ -38,6 +38,7 @@ const getDashboardStats = async (req, res) => {
     const readyToCollect = await Order.countDocuments({ status: { $in: ['Packed successfully', 'Ready to collect', 'Ready to Collect'] } });
     const deliveredOrders = await Order.countDocuments({ status: 'Delivered' });
     const cancelledOrders = await Order.countDocuments({ status: 'Cancelled' });
+    const cancelledByUserOrders = await Order.countDocuments({ status: 'Cancelled by User' });
 
     // Calculate total revenue
     const revenueData = await Order.aggregate([
@@ -48,13 +49,16 @@ const getDashboardStats = async (req, res) => {
 
     // Calculate total pending amount
     const pendingRevenueData = await Order.aggregate([
-      { $match: { status: { $nin: ['Delivered', 'Cancelled'] } } },
+      { $match: { status: { $nin: ['Delivered', 'Cancelled', 'Cancelled by User'] } } },
       { $group: { _id: null, total: { $sum: '$totalPrice' } } }
     ]);
     const pendingRevenue = pendingRevenueData[0]?.total || 0;
 
     // Get low stock items
-    const lowStockItems = await Product.find({ stock: { $lt: 20 } }).select('name stock').limit(5);
+    const lowStockItems = await Product.find({ $expr: { $lte: ['$stock', '$minStock'] } })
+      .select('name stock minStock category')
+      .sort({ stock: 1 })
+      .limit(5);
 
     // Get top products
     const topProducts = await Order.aggregate([
@@ -97,6 +101,7 @@ const getDashboardStats = async (req, res) => {
         readyToCollect,
         deliveredOrders,
         cancelledOrders,
+        cancelledByUserOrders,
         totalRevenue,
         pendingRevenue
       },
@@ -199,7 +204,7 @@ const updateOrderStatus = async (req, res) => {
     const { status, remarks } = req.body;
     const adminId = req.admin?._id || req.user?._id || 'system';
 
-    const validStatuses = ['Order placed', 'In queue', 'Reviewed', 'Processing', 'Packed successfully', 'Ready to collect', 'Ready to Collect', 'Delivered', 'Cancelled'];
+    const validStatuses = ['Order placed', 'In queue', 'Reviewed', 'Processing', 'Packed successfully', 'Ready to collect', 'Ready to Collect', 'Delivered', 'Cancelled', 'Cancelled by User'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
@@ -237,25 +242,30 @@ const updateOrderStatus = async (req, res) => {
 
     // Send notification to student based on status
     const notificationMessages = {
+      'Order placed': { title: 'Order Status Updated', message: 'Your order has been placed.' },
+      'In queue': { title: 'Order In Queue', message: 'Your order is now in the processing queue.' },
       'Reviewed': { title: '✓ Order Reviewed', message: 'Your order has been reviewed by the admin.' },
       'Processing': { title: '⚙ Order Processing', message: 'Your order is being processed.' },
       'Packed successfully': { title: '📦 Order Packed', message: 'Your order has been packed successfully.' },
       'Ready to collect': { title: '🎁 Ready to Collect', message: 'Your order is ready to collect from the counter.' },
       'Ready to Collect': { title: '🎁 Ready to Collect', message: 'Your order is ready to collect from the counter.' },
       'Delivered': { title: '✅ Order Delivered', message: 'Your order has been delivered.' },
-      'Cancelled': { title: '❌ Order Cancelled', message: 'Your order has been cancelled.' }
+      'Cancelled': { title: '❌ Order Cancelled', message: 'Your order has been cancelled by the admin.' },
+      'Cancelled by User': { title: 'Order Cancelled', message: 'Your order was cancelled by you.' }
     };
 
-    if (notificationMessages[status]) {
-      await createNotification(
-        updatedOrder.studentId._id,
-        'Student',
-        `order_${status.toLowerCase().replace(/\s+/g, '_')}`,
-        notificationMessages[status].title,
-        notificationMessages[status].message,
-        updatedOrder._id
-      );
-    }
+    const notification = notificationMessages[status] || {
+      title: 'Order Status Updated',
+      message: `Your order status is now ${status}.`
+    };
+    await createNotification(
+      updatedOrder.studentId._id,
+      'Student',
+      `order_${status.toLowerCase().replace(/\s+/g, '_')}`,
+      notification.title,
+      `${notification.message} (Order #${updatedOrder.orderNumber})`,
+      updatedOrder._id
+    );
 
     // Emit order status change event
     if (global.io) {
@@ -322,18 +332,19 @@ const getInventory = async (req, res) => {
     if (category) filter.category = category;
 
     const products = await Product.find(filter)
-      .select('name stock price category image createdAt')
+      .select('name stock minStock price category image updatedAt')
       .sort(sortBy === 'stock' ? { stock: 1 } : { name: 1 });
 
     const inventory = products.map(product => ({
       id: product._id,
       name: product.name,
       stock: product.stock || 0,
+      minStock: product.minStock,
       price: product.price || 0,
       category: product.category || 'General',
       image: product.image || '',
-      status: product.stock < 20 ? 'Low Stock' : product.stock === 0 ? 'Out of Stock' : 'In Stock',
-      lastUpdated: product.createdAt
+      status: product.stock === 0 ? 'Out of Stock' : product.stock <= product.minStock ? 'Low Stock' : 'In Stock',
+      lastUpdated: product.updatedAt
     }));
 
     // Get categories
@@ -345,7 +356,7 @@ const getInventory = async (req, res) => {
       stats: {
         totalProducts: inventory.length,
         outOfStock: inventory.filter(item => item.stock === 0).length,
-        lowStock: inventory.filter(item => item.stock > 0 && item.stock < 20).length
+        lowStock: inventory.filter(item => item.stock > 0 && item.stock <= item.minStock).length
       }
     });
   } catch (error) {
@@ -357,7 +368,7 @@ const getInventory = async (req, res) => {
 const updateStock = async (req, res) => {
   try {
     const { productId } = req.params;
-    const { quantity, action } = req.body;
+    const { quantity, action = 'set' } = req.body;
     const adminId = req.admin?._id || req.user?._id || 'system';
 
     const product = await Product.findById(productId);
@@ -366,22 +377,25 @@ const updateStock = async (req, res) => {
       return res.status(404).json({ message: 'Product not found' });
     }
 
-    let oldStock = product.stock;
-    let newStock = oldStock;
+    if (!Number.isInteger(Number(quantity)) || Number(quantity) < 0 ||
+        !['set', 'add', 'subtract'].includes(action)) {
+      return res.status(400).json({ message: 'quantity must be a non-negative integer and action must be set, add, or subtract' });
+    }
+
+    const oldStock = product.stock;
+    let newStock;
 
     if (action === 'set') {
-      newStock = quantity;
+      newStock = Number(quantity);
     } else if (action === 'add') {
-      newStock = oldStock + quantity;
+      newStock = oldStock + Number(quantity);
     } else if (action === 'subtract') {
-      newStock = Math.max(0, oldStock - quantity);
-    } else {
-      newStock = quantity;
+      newStock = Math.max(0, oldStock - Number(quantity));
     }
 
     const updatedProduct = await Product.findByIdAndUpdate(
       productId,
-      { stock: newStock },
+      { stock: newStock, updatedAt: new Date() },
       { new: true }
     );
 
@@ -396,16 +410,38 @@ const updateStock = async (req, res) => {
     });
 
     // Notify admins if stock is low
-    if (newStock < 20 && oldStock >= 20) {
+    const isLowStock = newStock <= updatedProduct.minStock;
+    const wasLowStock = oldStock <= product.minStock;
+    if (isLowStock && !wasLowStock) {
       await createNotification(
-        '6000000000000000000001', // Placeholder for admin group
+        null,
         'Admin',
         'low_stock_alert',
-        '⚠ Low Stock Alert',
-        `${product.name} is now low in stock (${newStock} units remaining)`,
+        'Low Stock Alert',
+        `${product.name} is at or below its minimum stock level (${newStock}/${updatedProduct.minStock})`,
         null,
         product._id
       );
+    }
+
+    if (global.io) {
+      const lowStockItems = await Product.countDocuments({ $expr: { $lte: ['$stock', '$minStock'] } });
+      global.io.emit('stock-updated', {
+        productId: updatedProduct._id.toString(),
+        productName: updatedProduct.name,
+        newStock,
+        minStock: updatedProduct.minStock,
+        isLowStock,
+        badge: lowStockItems
+      });
+      if (isLowStock && !wasLowStock) {
+        global.io.to('admin-room').emit('low-stock-alert', {
+          productId: updatedProduct._id.toString(),
+          productName: updatedProduct.name,
+          newStock,
+          minStock: updatedProduct.minStock
+        });
+      }
     }
 
     res.json({
@@ -422,15 +458,100 @@ const updateStock = async (req, res) => {
   }
 };
 
+const getReportData = async (req, res) => {
+  try {
+    const { type, dateRange = 'month' } = req.query;
+    const allowedTypes = ['inventory', 'students', 'payments'];
+    if (!allowedTypes.includes(type)) {
+      return res.status(400).json({ message: 'Unsupported report type' });
+    }
+
+    const startDate = new Date();
+    startDate.setUTCHours(0, 0, 0, 0);
+    if (dateRange === 'week') startDate.setDate(startDate.getDate() - 7);
+    else if (dateRange === 'month') startDate.setMonth(startDate.getMonth() - 1);
+    else if (dateRange === 'quarter') startDate.setMonth(startDate.getMonth() - 3);
+    else if (dateRange === 'year') startDate.setFullYear(startDate.getFullYear() - 1);
+    else return res.status(400).json({ message: 'Unsupported date range' });
+
+    if (type === 'inventory') {
+      const items = await Product.find({})
+        .select('name category stock minStock price')
+        .sort({ name: 1 })
+        .lean();
+      const lowStock = items.filter(item => item.stock <= item.minStock).length;
+      return res.json({
+        items,
+        summary: {
+          totalProducts: items.length,
+          totalUnits: items.reduce((total, item) => total + item.stock, 0),
+          lowStock,
+          inventoryValue: items.reduce((total, item) => total + item.stock * item.price, 0)
+        }
+      });
+    }
+
+    const orders = await Order.find({
+      createdAt: { $gte: startDate },
+      status: { $ne: 'Cancelled' }
+    }).select('studentId totalPrice paymentStatus');
+
+    if (type === 'payments') {
+      const summary = { totalOrders: orders.length, totalAmount: 0, Paid: 0, Pending: 0, Failed: 0 };
+      for (const order of orders) {
+        summary[order.paymentStatus] = (summary[order.paymentStatus] || 0) + 1;
+        if (order.paymentStatus === 'Paid') summary.totalAmount += order.totalPrice;
+      }
+      return res.json({ items: [], summary });
+    }
+
+    const totalsByStudent = new Map();
+    for (const order of orders) {
+      const key = String(order.studentId);
+      const current = totalsByStudent.get(key) || { orderCount: 0, totalSpend: 0 };
+      current.orderCount += 1;
+      current.totalSpend += order.totalPrice;
+      totalsByStudent.set(key, current);
+    }
+    const ranked = [...totalsByStudent.entries()]
+      .sort((a, b) => b[1].totalSpend - a[1].totalSpend)
+      .slice(0, 20);
+    const students = await Student.find({ _id: { $in: ranked.map(([id]) => id) } })
+      .select('name rollNo department')
+      .lean();
+    const studentById = new Map(students.map(student => [String(student._id), student]));
+    const items = ranked.map(([id, totals]) => {
+      const student = studentById.get(id);
+      return {
+        name: student?.name || 'Unknown student',
+        rollNo: student?.rollNo || 'N/A',
+        department: student?.department || '',
+        orderCount: totals.orderCount,
+        totalSpend: totals.totalSpend
+      };
+    });
+    return res.json({
+      items,
+      summary: {
+        students: totalsByStudent.size,
+        orders: orders.length,
+        totalSpend: orders.reduce((total, order) => total + order.totalPrice, 0)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching report data', error: error.message });
+  }
+};
+
 // Get stock analytics
 const getStockAnalytics = async (req, res) => {
   try {
-    const lowStockItems = await Product.find({ stock: { $lt: 20, $gt: 0 } })
-      .select('name stock price')
+    const lowStockItems = await Product.find({ stock: { $gt: 0 }, $expr: { $lte: ['$stock', '$minStock'] } })
+      .select('name stock minStock price')
       .sort({ stock: 1 });
 
     const outOfStockItems = await Product.find({ stock: 0 })
-      .select('name price');
+      .select('name stock minStock price');
 
     const totalValue = await Product.aggregate([
       {
@@ -446,6 +567,7 @@ const getStockAnalytics = async (req, res) => {
       lowStockItems: lowStockItems.map(item => ({
         name: item.name,
         stock: item.stock,
+        minStock: item.minStock,
         price: item.price,
         value: item.stock * item.price
       })),
@@ -595,6 +717,7 @@ module.exports = {
   getStockAnalytics,
   getDailySalesData,
   getTopSellingItems,
+  getReportData,
   verifyUpload,
   deleteUpload
 };
